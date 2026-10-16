@@ -1,0 +1,4 @@
+# OpenCV 5 dropped the Haar face detector we use, so stay on 4.x
+opencv-python-headless>=4.8,<5
+pystray>=0.19
+pillow>=10
