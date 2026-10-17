@@ -47,6 +47,14 @@ OWNER_PATH = DATA_HOME / "owner.npy"  # your face "fingerprints", not photos
 # Average brightness (0-255) under which we call a frame black.
 BLACK_LEVEL = 8
 
+# With scans this far apart (seconds) we close the camera between them, so the
+# camera light and the red IR flashing only happen while we're actually looking.
+# Closer together than that it's not worth the warm-up, so we keep it open.
+KEEP_OPEN_BELOW = 5
+
+# Frames thrown away after opening so the exposure can settle.
+WARMUP_FRAMES = 2
+
 # Face models from the OpenCV model zoo. They're downloaded once and checked
 # against these hashes, so a tampered or corrupted file is rejected.
 MODELS = {
@@ -188,12 +196,7 @@ def list_cameras():
         print("No /dev/video* devices found.")
     for index, node in nodes:
         cam = cv2.VideoCapture(index)
-        frame = None
-        if cam.isOpened():
-            for _ in range(5):  # first frames are often junk
-                ok, f = cam.read()
-                if ok:
-                    frame = f
+        frame = best_frame(cam) if cam.isOpened() else None
         cam.release()
 
         if frame is None:
@@ -209,6 +212,26 @@ def list_cameras():
         if frame.mean() < BLACK_LEVEL:
             note += ", but the frame is black (wave a hand in front of it and retry)"
         print(f"{node}: {w}x{h}, {note}   -> --camera {index}")
+
+
+def best_frame(cam, tries=8):
+    """A usable frame from the camera, or None if it gives us nothing at all.
+
+    The IR camera on the VivoBook strobes its emitter, so every second frame is
+    pitch black even when everything is fine. We read a few frames and take the
+    first lit one; only if they're all black do we hand back a black frame.
+    """
+    for _ in range(2):
+        cam.grab()  # drop stale buffered frames, they get old with long intervals
+    frame = None
+    for _ in range(tries):
+        ok, f = cam.read()
+        if not ok:
+            continue
+        frame = f
+        if f.mean() >= BLACK_LEVEL:
+            break
+    return frame
 
 
 def acquire_single_instance():
@@ -235,6 +258,26 @@ def lock_screen():
         subprocess.run(cmd, check=False)
     except FileNotFoundError:
         log.error("Couldn't run %s, is it installed?", cmd[0])
+
+
+def screen_locked():
+    """True/False if the screen is locked, None when we can't tell."""
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+    if "gnome" in desktop:
+        cmd = ["dbus-send", "--session", "--print-reply", "--dest=org.gnome.ScreenSaver",
+               "/org/gnome/ScreenSaver", "org.gnome.ScreenSaver.GetActive"]
+    elif "kde" in desktop:
+        cmd = ["qdbus", "org.freedesktop.ScreenSaver", "/ScreenSaver", "GetActive"]
+    else:
+        cmd = ["loginctl", "show-session", os.environ.get("XDG_SESSION_ID", "auto"),
+               "-p", "LockedHint", "--value"]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout.strip().lower()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not out:
+        return None
+    return out.endswith("true") or out == "yes"
 
 
 # ---------- face models ----------
@@ -380,12 +423,10 @@ def enroll(cam, detector, samples=10, attempts=40, delay=0.7, say=print):
     say("Look at the camera and slowly turn your head a little left and right.")
     features = []
     for n in range(attempts):
-        for _ in range(3):
-            cam.grab()  # skip stale buffered frames
-        ok, frame = cam.read()
-        if ok and frame.mean() < BLACK_LEVEL:
+        frame = best_frame(cam)
+        if frame is not None and frame.mean() < BLACK_LEVEL:
             say("Frame is black, wave a hand in front of the IR sensor.")
-        elif ok:
+        elif frame is not None:
             faces = detector.faces(frame)
             if len(faces) == 1:
                 features.append(detector.feature(frame, faces[0]).reshape(-1))
@@ -413,6 +454,7 @@ class Watcher(threading.Thread):
         self.quit = threading.Event()
         self.misses = 0
         self.dark = False
+        self.was_locked = False
         if not start_paused:
             self.active.set()
 
@@ -428,11 +470,8 @@ class Watcher(threading.Thread):
 
     def face_present(self, cam):
         """True/False for face seen or not, None when this scan tells us nothing."""
-        # Camera buffers hold old frames, and with long intervals they'd be very old.
-        for _ in range(3):
-            cam.grab()
-        ok, frame = cam.read()
-        if not ok:
+        frame = best_frame(cam)
+        if frame is None:
             return None  # camera hiccup, don't count it as "gone"
         gray = frame if frame.ndim == 2 else cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         self.dark = gray.mean() < BLACK_LEVEL
@@ -445,6 +484,7 @@ class Watcher(threading.Thread):
         """One scan: update the miss counter and lock when it's full. Returns True if we locked."""
         seen = self.face_present(cam)
         if seen is True:
+            log.debug("Someone is there.")
             self.misses = 0
         elif seen is False:
             self.misses += 1
@@ -458,10 +498,12 @@ class Watcher(threading.Thread):
         return False
 
     def open_camera(self):
-        cam = cv2.VideoCapture(self.cfg["camera"])
+        cam = cv2.VideoCapture(self.cfg["camera"], cv2.CAP_V4L2)  # skips a slow fallback to other backends
         if not cam.isOpened():
             cam.release()
             return None
+        for _ in range(WARMUP_FRAMES):
+            cam.grab()
         return cam
 
     def run(self):
@@ -475,6 +517,21 @@ class Watcher(threading.Thread):
                 self.active.wait()
                 continue
 
+            if screen_locked():
+                # Nothing to guard while it's locked, so leave the camera alone until you're back.
+                if cam:
+                    cam.release()
+                    cam = None
+                if not self.was_locked:
+                    log.info("Screen is locked, scanning paused until you unlock.")
+                self.was_locked = True
+                self.misses = 0
+                self.quit.wait(self.cfg["interval"])
+                continue
+            if self.was_locked:
+                log.info("Unlocked, scanning again.")
+                self.was_locked = False
+
             if cam is None:
                 cam = self.open_camera()
                 if cam is None:
@@ -483,6 +540,9 @@ class Watcher(threading.Thread):
                     continue
 
             self.scan_once(cam)
+            if self.cfg["interval"] >= KEEP_OPEN_BELOW:
+                cam.release()
+                cam = None
             self.quit.wait(self.cfg["interval"])
 
         if cam:
@@ -491,8 +551,24 @@ class Watcher(threading.Thread):
 
 # ---------- tray ----------
 
+def expose_system_typelibs():
+    """Let a conda/venv python find the system's AppIndicator library.
+
+    GNOME only shows tray icons made through AppIndicator, which pystray reaches
+    via PyGObject. Environments like conda don't look in the system's typelib
+    folders, so we point them there. Has to happen before anything imports gi.
+    """
+    found = [d for d in ("/usr/lib/x86_64-linux-gnu/girepository-1.0",
+                         "/usr/lib/aarch64-linux-gnu/girepository-1.0",
+                         "/usr/lib64/girepository-1.0",
+                         "/usr/lib/girepository-1.0") if os.path.isdir(d)]
+    current = [d for d in os.environ.get("GI_TYPELIB_PATH", "").split(":") if d]
+    os.environ["GI_TYPELIB_PATH"] = ":".join(current + [d for d in found if d not in current])
+
+
 def run_tray(watcher):
     # Tray support is optional so the core still works on a bare install.
+    expose_system_typelibs()
     try:
         import pystray
         from PIL import Image, ImageDraw
@@ -510,8 +586,10 @@ def run_tray(watcher):
     def on_toggle(icon, item):
         watcher.toggle()
         icon.icon = icon_image(watcher.active.is_set())
+        log.info("Resumed." if watcher.active.is_set() else "Paused, camera released.")
 
     def on_quit(icon, item):
+        log.info("Quit from the tray.")
         watcher.stop()
         icon.stop()
 

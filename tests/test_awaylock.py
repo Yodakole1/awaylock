@@ -7,6 +7,8 @@ import pytest
 
 import awaylock
 
+real_screen_locked = awaylock.screen_locked  # the autouse fixture below replaces the module's copy
+
 
 # ---------- helpers ----------
 
@@ -22,6 +24,9 @@ class FakeCam:
 
     def read(self):
         return self.ok, self.frame
+
+    def release(self):
+        pass
 
 
 class FakeDetector:
@@ -64,6 +69,7 @@ def isolated_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(awaylock, "LOCK_PATH", tmp_path / "awaylock.lock")
     monkeypatch.setattr(awaylock, "OWNER_PATH", tmp_path / "data" / "owner.npy")
     monkeypatch.setattr(awaylock, "MODELS_DIR", tmp_path / "models")
+    monkeypatch.setattr(awaylock, "screen_locked", lambda: False)  # never ask the real desktop
 
 
 # ---------- arguments and config ----------
@@ -436,3 +442,151 @@ def test_enroll_warns_about_black_frames():
     with pytest.raises(SystemExit):
         awaylock.enroll(FakeCam(BLACK), EnrollDetector([]), samples=1, attempts=2, delay=0, say=said.append)
     assert any("wave a hand" in m for m in said)
+
+
+# ---------- strobing IR camera ----------
+
+class StrobeCam:
+    """Like the real IR camera: every other frame is black."""
+
+    def __init__(self, lit_first=False):
+        self.n = 0 if lit_first else 1
+
+    def grab(self):
+        self.n += 1
+        return True
+
+    def read(self):
+        self.n += 1
+        return True, (BRIGHT if self.n % 2 == 0 else BLACK)
+
+
+@pytest.mark.parametrize("lit_first", [True, False])
+def test_best_frame_skips_the_black_strobe_frames(lit_first):
+    frame = awaylock.best_frame(StrobeCam(lit_first))
+    assert frame.mean() > awaylock.BLACK_LEVEL
+
+
+def test_best_frame_returns_black_when_everything_is_black():
+    assert awaylock.best_frame(FakeCam(BLACK)).mean() == 0
+
+
+def test_best_frame_none_when_camera_gives_nothing():
+    assert awaylock.best_frame(FakeCam(None, ok=False)) is None
+
+
+def test_strobe_does_not_cause_false_locks(cfg, locks):
+    w = make_watcher(cfg, faces=FACE)
+    cam = StrobeCam()
+    for _ in range(20):
+        w.scan_once(cam)
+    assert locks == []
+    assert not w.dark
+
+
+# ---------- pausing while locked ----------
+
+class Result:
+    def __init__(self, stdout):
+        self.stdout = stdout
+
+
+@pytest.mark.parametrize("desktop, output, expected", [
+    ("ubuntu:GNOME", "method return time=1 sender=:1.5 -> destination=:1.9 serial=3 reply_serial=2\n   boolean true\n", True),
+    ("ubuntu:GNOME", "method return time=1\n   boolean false\n", False),
+    ("KDE", "true\n", True),
+    ("KDE", "false\n", False),
+    ("sway", "yes\n", True),
+    ("sway", "no\n", False),
+    ("sway", "", None),
+])
+def test_screen_locked_reads_each_desktop(monkeypatch, desktop, output, expected):
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", desktop)
+    monkeypatch.setattr(awaylock.subprocess, "run", lambda *a, **k: Result(output))
+    assert real_screen_locked() is expected
+
+
+def test_screen_locked_unknown_when_tool_missing(monkeypatch):
+    def boom(*a, **k):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(awaylock.subprocess, "run", boom)
+    assert real_screen_locked() is None
+
+
+def test_no_scanning_or_camera_while_locked(cfg, monkeypatch):
+    w = awaylock.Watcher(dict(cfg, interval=0.01), FakeDetector([]))
+    checks = []
+
+    def locked():
+        checks.append(1)
+        if len(checks) == 4:
+            w.stop()
+        return True
+
+    monkeypatch.setattr(awaylock, "screen_locked", locked)
+    monkeypatch.setattr(w, "open_camera", lambda: pytest.fail("camera opened while locked"))
+    w.run()
+    assert len(checks) == 4
+    assert w.was_locked
+
+
+def test_scanning_resumes_after_unlock(cfg, monkeypatch, locks):
+    w = awaylock.Watcher(dict(cfg, interval=0.01, misses=1), FakeDetector([]))
+    states = iter([True, True, False])
+    monkeypatch.setattr(awaylock, "screen_locked", lambda: next(states))
+    monkeypatch.setattr(w, "open_camera", lambda: FakeCam(BRIGHT))
+    monkeypatch.setattr(awaylock, "lock_screen", lambda: (locks.append(1), w.stop()))
+    w.run()
+    assert len(locks) == 1  # locked once it was unlocked and nobody was there
+    assert not w.was_locked
+
+
+# ---------- camera only open while scanning ----------
+
+class CountingCam(FakeCam):
+    def __init__(self):
+        super().__init__(BRIGHT)
+        self.released = False
+
+    def release(self):
+        self.released = True
+
+
+@pytest.mark.parametrize("interval, stays_open", [(10, False), (5, False), (2, True)])
+def test_camera_closed_between_scans_only_for_long_intervals(cfg, monkeypatch, interval, stays_open):
+    w = awaylock.Watcher(dict(cfg, interval=interval), FakeDetector(FACE))
+    cams = []
+
+    def open_camera():
+        cams.append(CountingCam())
+        return cams[-1]
+
+    monkeypatch.setattr(w, "open_camera", open_camera)
+    state_while_waiting = []
+
+    def wait(t):  # runs between two scans, then we stop
+        state_while_waiting.append(cams[0].released)
+        w.quit.set()
+
+    monkeypatch.setattr(w.quit, "wait", wait)
+    w.run()
+    assert state_while_waiting == [not stays_open]
+    assert cams[0].released is True  # always released on the way out
+
+
+def test_long_interval_reopens_camera_for_each_scan(cfg, monkeypatch):
+    w = awaylock.Watcher(dict(cfg, interval=10), FakeDetector(FACE))
+    cams = []
+    monkeypatch.setattr(w, "open_camera", lambda: cams.append(CountingCam()) or cams[-1])
+    count = []
+
+    def wait(t):
+        count.append(1)
+        if len(count) == 3:
+            w.quit.set()
+
+    monkeypatch.setattr(w.quit, "wait", wait)
+    w.run()
+    assert len(cams) == 3
+    assert all(c.released for c in cams)
