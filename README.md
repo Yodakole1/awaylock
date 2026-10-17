@@ -173,6 +173,8 @@ Covered by unit tests only, not yet tried on real hardware:
 
 Other things to know:
 
+- On GNOME, changing the tray icon can log `unable to update icon: ... Failed to recognize image format`
+  in the journal. The icon still changes color correctly, so it is harmless noise for now.
 - Haar occasionally misses a face in a single scan. That is what `--misses` is for, and YuNet is steadier.
 - No liveness detection (see above).
 - Linux only.
