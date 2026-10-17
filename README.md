@@ -20,11 +20,14 @@ Made and tested on an ASUS VivoBook (Sonix IR camera, Ubuntu, GNOME on Wayland).
 - [Privacy](#privacy)
 - [Status and limits](#status-and-limits)
 - [Development](#development)
+- [Changelog](CHANGELOG.md)
 - [License](#license)
 
 ## Quick start
 
 ```bash
+git clone git@github.com:Yodakole1/awaylock.git
+cd awaylock
 conda create -n awaylock python=3.12 pip       # or use a venv
 conda activate awaylock
 pip install -r requirements.txt
@@ -191,10 +194,9 @@ python -m pytest
 The tests never touch a camera or lock your screen. The camera, the lock call and the
 neural nets are replaced with fakes.
 
-Contributions are welcome. Handy things to help with: testing on other laptops and desktops,
-other IR cameras, and wake-on-approach. If you open an issue, include the output of
-`./awaylock.py --list-cameras`, your desktop and session type (`echo $XDG_CURRENT_DESKTOP $XDG_SESSION_TYPE`),
-and a `-v` log.
+Contributions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). The most useful thing is trying it on
+other laptops and desktops and reporting what happened (the issue template tells you what to include).
+Other ideas: wake-on-approach, a warning before locking, and a battery mode.
 
 ## License
 
