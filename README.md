@@ -163,12 +163,12 @@ Run with `-v` to see your match score on every scan, which is the easiest way to
 
 Tested on real hardware (ASUS VivoBook, Ubuntu, GNOME 50 on Wayland):
 IR camera detection, scanning with Haar, YuNet and owner mode, enrollment, locking and unlocking,
-pausing while locked, and the tray icon.
+pausing while locked, the tray icon, and owner mode turning away one other person (their scores
+were 0.15-0.25 against 0.8-0.9 for the owner, with the default threshold of 0.363).
 
 Covered by unit tests only, not yet tried on real hardware:
 
 - KDE and the generic `loginctl` fallback for locking and lock detection.
-- Owner mode rejecting a *different* person (the matching logic is tested with fake data).
 - Starting from the autostart entry at login.
 - X11 sessions.
 
