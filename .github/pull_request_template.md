@@ -1,4 +1,5 @@
 <!-- Write this yourself, in your own words. Short is fine. -->
+<!-- Open the PR against `develop`, not `main`. -->
 
 ## What and why
 What does this change, what problem does it solve, and why is it needed?

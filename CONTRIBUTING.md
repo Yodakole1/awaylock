@@ -27,6 +27,22 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
+## Branches
+
+- `main` is the stable branch. It always works and is what people clone and install from.
+  Releases are tagged on it. Nobody commits to it directly.
+- `develop` is where work comes together. Pull requests target `develop`.
+- Work on a short-lived branch cut from `develop`, named for what it does (`fix-black-frames`,
+  `add-grace-warning`), and open the PR back into `develop`.
+- When `develop` is tested and ready, the maintainer merges it into `main` and tags a release.
+  A bad regression found on `main` can be fixed in a branch off `main` and merged into both.
+
+```bash
+git switch develop
+git pull
+git switch -c my-change
+```
+
 ## Before you open a pull request
 
 A pull request is a proposal, not a guarantee. It gets merged when it's correct, shown to work,
