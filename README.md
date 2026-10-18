@@ -167,7 +167,7 @@ Run with `-v` to see your match score on every scan, which is the easiest way to
 Tested on real hardware (ASUS VivoBook, Ubuntu, GNOME 50 on Wayland):
 IR camera detection, scanning with Haar, YuNet and owner mode, enrollment, locking and unlocking,
 pausing while locked, the tray icon, starting from the autostart entry at login, and owner mode turning away one other person (their scores
-were 0.15-0.25 against 0.8-0.9 for the owner, with the default threshold of 0.363).
+were 0.11-0.27 over two sessions against 0.8-0.9 for the owner, with the default threshold of 0.363).
 
 Covered by unit tests only, not yet tried on real hardware:
 
