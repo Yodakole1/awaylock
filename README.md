@@ -25,46 +25,74 @@ Made and tested on an ASUS VivoBook (Sonix IR camera, Ubuntu, GNOME on Wayland).
 
 ## Quick start
 
-```bash
-git clone git@github.com:Yodakole1/awaylock.git
-cd awaylock
-conda create -n awaylock python=3.12 pip       # or use a venv
-conda activate awaylock
-pip install -r requirements.txt
+On Ubuntu, Debian, Pop!_OS or Mint. Copy and paste this whole block into a terminal. It asks for
+your password once, for the `sudo apt` line.
 
-./awaylock.py --list-cameras                   # find your IR camera
-./awaylock.py --camera 2 --interval 5 --save   # use it, scan every 5s, remember that
-./awaylock.py                                  # run
-./awaylock.py --install-autostart              # start at every login
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip python3-gi gir1.2-ayatanaappindicator3-0.1
+
+git clone https://github.com/Yodakole1/awaylock.git
+cd awaylock
+python3 -m venv --system-site-packages .venv
+.venv/bin/pip install -r requirements.txt
 ```
+
+Then, from the `awaylock` folder:
+
+```bash
+./awaylock --list-cameras                   # shows your cameras, find the one marked "looks like IR"
+./awaylock --camera 2 --interval 5 --save   # use it (change 2 to your number), scan every 5s, remember that
+./awaylock                                  # run it, a tray icon appears
+./awaylock --install-autostart              # start it automatically at every login
+```
+
+Press `Ctrl+C` to stop it. To test it, cover the camera with your hand and wait. The screen
+should lock after a few scans.
+
+No IR camera? It works with a normal webcam too, which is usually camera `0`.
 
 ## Install
 
-Python 3.9+ and a webcam. IR cameras (the Windows Hello kind) work best because they see you
-in the dark, but any camera works.
+You need a Linux desktop, Python 3.9 or newer and a webcam. IR cameras (the Windows Hello kind)
+work best because they see you in the dark, but any camera works.
+
+What the packages in the quick start are for:
+
+| Package | Why |
+|---|---|
+| `python3`, `python3-venv`, `python3-pip` | Python and a private place to install awaylock's libraries (`.venv`) |
+| `git` | To download the project |
+| `python3-gi`, `gir1.2-ayatanaappindicator3-0.1` | The tray icon on GNOME. Optional, awaylock runs without it |
+
+`requirements.txt` installs OpenCV, Pillow and pystray into `.venv`. It keeps OpenCV on 4.x,
+because OpenCV 5 dropped the Haar face detector awaylock uses.
+
+`--system-site-packages` lets the private `.venv` see the system's `python3-gi`, which is the
+easiest way to get the tray working. You can leave it out if you don't want a tray icon.
+
+**Other distros** (package names are from memory and not tested, corrections welcome):
 
 ```bash
-pip install -r requirements.txt
+# Fedora
+sudo dnf install git python3 python3-pip python3-gobject libayatana-appindicator-gtk3
+# Arch
+sudo pacman -S git python python-pip python-gobject libayatana-appindicator
 ```
 
-OpenCV 5 dropped the Haar face detector awaylock uses, so `requirements.txt` keeps OpenCV on 4.x.
+then the same `git clone`, `python3 -m venv --system-site-packages .venv` and `pip install` lines.
+
+**Updating:** `cd awaylock && git pull && .venv/bin/pip install -r requirements.txt`
+
+**Uninstalling:** `./awaylock --uninstall-autostart`, then delete the `awaylock` folder. Your
+settings live in `~/.config/awaylock/` and any face data in `~/.local/share/awaylock/`
+(`./awaylock --forget-me` removes the face data).
 
 ### Tray icon on GNOME
 
-GNOME only shows tray icons made through AppIndicator, which Python reaches via PyGObject.
-
-```bash
-# Ubuntu / Debian
-sudo apt install gir1.2-ayatanaappindicator3-0.1
-# in conda (venv users: install python3-gi from your distro instead)
-conda install -c conda-forge pygobject
-```
-
-You also need the AppIndicator extension enabled (on Ubuntu it is by default).
-conda and venv pythons don't look in the system's typelib folders, so awaylock points them there
-itself before starting the tray.
-
-Without the tray libraries awaylock still works. It prints a note and runs without an icon.
+GNOME only shows tray icons made through AppIndicator. Ubuntu has the AppIndicator extension
+enabled by default, so the packages above are all you need. Without them awaylock still works, it just
+prints a note and runs without an icon (use `--no-tray` to skip the note).
 
 ## Options
 
@@ -125,10 +153,10 @@ Things it deliberately does not do:
 By default any face keeps the screen unlocked. If you'd rather it only trusts you:
 
 ```bash
-./awaylock.py --enroll                    # look at the camera, turn your head a little
-./awaylock.py --presence owner --save     # from now on only your face counts
-./awaylock.py --match-threshold 0.55      # stricter matching (default 0.45)
-./awaylock.py --forget-me                 # delete your face data
+./awaylock --enroll                    # look at the camera, turn your head a little
+./awaylock --presence owner --save     # from now on only your face counts
+./awaylock --match-threshold 0.55      # stricter matching (default 0.45)
+./awaylock --forget-me                 # delete your face data
 ```
 
 Someone else sitting at your laptop while you're away then counts as nobody there, and it locks.
@@ -187,8 +215,8 @@ Reports from other hardware and desktops are very welcome, see below.
 ## Development
 
 ```bash
-pip install -r requirements-dev.txt
-python -m pytest
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest
 ```
 
 The tests never touch a camera or lock your screen. The camera, the lock call and the

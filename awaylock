@@ -1,0 +1,8 @@
+#!/bin/sh
+# Launcher: runs awaylock with the project's .venv if there is one, so you
+# don't have to activate anything first. Falls back to the system python.
+here="$(cd "$(dirname "$0")" && pwd)"
+if [ -x "$here/.venv/bin/python" ]; then
+    exec "$here/.venv/bin/python" "$here/awaylock.py" "$@"
+fi
+exec python3 "$here/awaylock.py" "$@"
