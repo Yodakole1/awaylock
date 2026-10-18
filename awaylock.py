@@ -78,7 +78,7 @@ DEFAULTS = {
     "black_frame": "absent",  # what a black frame means: "absent" or "skip"
     "detector": "haar",       # "haar" (simple) or "yunet" (more accurate, needs a model download)
     "presence": "any",        # "any" face keeps you unlocked, "owner" only your enrolled face does
-    "match_threshold": 0.363,  # how similar a face must be to count as you (OpenCV's suggested value)
+    "match_threshold": 0.45,  # how similar a face must be to count as you (OpenCV suggests 0.363, we want more margin)
     "detect_threshold": 0.8,  # how sure yunet must be that something is a face
 }
 

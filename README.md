@@ -78,7 +78,7 @@ Every setting is a command line option. Add `--save` to keep what you passed as 
 | `--camera N` | Camera index, the N in `/dev/videoN` | 2 |
 | `--detector haar\|yunet` | Face detector. YuNet is more accurate and downloads a small model once | haar |
 | `--presence any\|owner` | Any face keeps you unlocked, or only your enrolled face | any |
-| `--match-threshold X` | How similar a face must be to count as you, 0-1 | 0.363 |
+| `--match-threshold X` | How similar a face must be to count as you, 0-1 | 0.45 |
 | `--detect-threshold X` | How sure YuNet must be that something is a face | 0.8 |
 | `--min-face PIXELS` | Smallest face to care about | 30 |
 | `--black-frame absent\|skip` | Treat all-black frames as "nobody there", or ignore them | absent |
@@ -127,7 +127,7 @@ By default any face keeps the screen unlocked. If you'd rather it only trusts yo
 ```bash
 ./awaylock.py --enroll                    # look at the camera, turn your head a little
 ./awaylock.py --presence owner --save     # from now on only your face counts
-./awaylock.py --match-threshold 0.45      # stricter matching (default 0.363)
+./awaylock.py --match-threshold 0.55      # stricter matching (default 0.45)
 ./awaylock.py --forget-me                 # delete your face data
 ```
 
@@ -167,7 +167,7 @@ Run with `-v` to see your match score on every scan, which is the easiest way to
 Tested on real hardware (ASUS VivoBook, Ubuntu, GNOME 50 on Wayland):
 IR camera detection, scanning with Haar, YuNet and owner mode, enrollment, locking and unlocking,
 pausing while locked, the tray icon, starting from the autostart entry at login, and owner mode turning away one other person (their scores
-were 0.11-0.27 over two sessions against 0.8-0.9 for the owner, with the default threshold of 0.363).
+were 0.11-0.27 over two sessions against 0.8-0.9 for the owner, against a threshold of 0.363; the default is now 0.45 for more margin).
 
 Covered by unit tests only, not yet tried on real hardware:
 
