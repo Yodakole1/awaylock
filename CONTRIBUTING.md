@@ -11,9 +11,9 @@ A short report ("works on a Lenovo X1 with KDE" or "locks but the camera index w
 
 When you open an issue, please include:
 
-- the output of `./awaylock.py --list-cameras`
+- the output of `./awaylock --list-cameras`
 - your desktop and session: `echo $XDG_CURRENT_DESKTOP $XDG_SESSION_TYPE`
-- a log from `./awaylock.py -v`
+- a log from `./awaylock -v`
 - your laptop model
 
 ## Setting up
@@ -21,10 +21,26 @@ When you open an issue, please include:
 ```bash
 git clone git@github.com:Yodakole1/awaylock.git
 cd awaylock
-conda create -n awaylock python=3.12 pip   # or python -m venv
-conda activate awaylock
-pip install -r requirements-dev.txt
-python -m pytest
+git switch develop
+python3 -m venv --system-site-packages .venv   # needs python3-venv and python3-gi, see the README
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest
+```
+
+## Branches
+
+- `main` is the stable branch. It always works and is what people clone and install from.
+  Releases are tagged on it. Nobody commits to it directly.
+- `develop` is where work comes together. Pull requests target `develop`.
+- Work on a short-lived branch cut from `develop`, named for what it does (`fix-black-frames`,
+  `add-grace-warning`), and open the PR back into `develop`.
+- When `develop` is tested and ready, the maintainer merges it into `main` and tags a release.
+  A bad regression found on `main` can be fixed in a branch off `main` and merged into both.
+
+```bash
+git switch develop
+git pull
+git switch -c my-change
 ```
 
 ## Before you open a pull request
@@ -37,7 +53,7 @@ be merged if it adds more upkeep than it's worth.
 - **Match the existing style.** Read the code around your change and write like it.
 - **Don't break what already works.** New features must leave existing behavior, defaults and
   options alone unless the PR is specifically about changing them. If you change a default, say so loudly.
-- **It has to run.** Install from `requirements.txt`, start the program, and run `python -m pytest`
+- **It has to run.** Install from `requirements.txt`, start the program, and run `.venv/bin/python -m pytest`
   before you ask for review. If something fails to import or build, include the log.
 - **Say how you tested.** See the next section. "Untested" is an acceptable answer as long as it's honest.
 - **Be sparing with logging.** A log line should help someone diagnose a real problem. Don't narrate
@@ -53,7 +69,7 @@ they will be annoyed by a claim that turns out not to be true.
 
 There are two kinds of checking, and they cover different things:
 
-1. **Automated tests** (`python -m pytest`). They use fakes instead of a camera, a screen lock or the
+1. **Automated tests** (`.venv/bin/python -m pytest`). They use fakes instead of a camera, a screen lock or the
    neural nets, so they run anywhere. New behavior should come with a test.
 2. **Real hardware.** Anything touching the camera, the lock command, the tray or autostart should be
    tried for real, and the PR should say on what: laptop, camera (`--list-cameras` output),
