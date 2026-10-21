@@ -12,5 +12,6 @@ First public version.
 - Skips scanning while the screen is locked.
 - The camera is only open while scanning when the interval is 5 seconds or more.
 - Optional YuNet detector and owner mode (`--enroll`, `--presence owner`) that only trusts your face.
+- `--grace` warns before locking and looks once more; `--battery-interval` scans less often on battery.
 - Single-instance lock, camera retry, pinned-hash model downloads.
 - Tested on an ASUS VivoBook with Ubuntu and GNOME on Wayland.

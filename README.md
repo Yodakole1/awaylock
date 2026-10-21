@@ -102,6 +102,8 @@ Every setting is a command line option. Add `--save` to keep what you passed as 
 | Option | What it does | Default |
 |---|---|---|
 | `--interval SECONDS` | Time between scans | 10 |
+| `--grace SECONDS` | Show a "locking in N seconds" popup and look once more before locking. Showing up cancels the lock. 0 turns it off | 0 |
+| `--battery-interval SECONDS` | Scan this far apart while on battery, to save power. 0 means same as `--interval` | 0 |
 | `--misses N` | Empty scans in a row before locking | 3 |
 | `--camera N` | Camera index, the N in `/dev/videoN` | 2 |
 | `--detector haar\|yunet` | Face detector. YuNet is more accurate and downloads a small model once | haar |
@@ -141,6 +143,14 @@ time to lock  =  misses x (interval + about 2 seconds)
 ```
 
 So `--interval 5 --misses 3` locks about 15 to 21 seconds after you leave.
+
+With `--grace 10`, the last miss doesn't lock right away. You get a popup, awaylock waits 10 seconds,
+looks once more, and only locks if there is still nobody. The camera stays on during the wait.
+The popup uses `notify-send` (package `libnotify-bin`, already there on Ubuntu); without it you
+just don't see the warning.
+
+`--battery-interval 30` makes it scan every 30 seconds while the laptop runs on battery and go back
+to `--interval` on AC. The time to lock stretches accordingly, so pair it with fewer `--misses`.
 
 Things it deliberately does not do:
 
@@ -224,7 +234,7 @@ neural nets are replaced with fakes.
 
 Contributions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). The most useful thing is trying it on
 other laptops and desktops and reporting what happened (the issue template tells you what to include).
-Other ideas: wake-on-approach, a warning before locking, and a battery mode.
+Other ideas: wake-on-approach.
 
 ## License
 
