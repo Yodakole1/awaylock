@@ -282,11 +282,33 @@ def on_battery():
 
 
 def notify(text, seconds=5):
-    # A desktop popup. Purely a courtesy, so any failure is ignored.
+    """Show a desktop popup and return its id so it can be closed early, or None.
+
+    Purely a courtesy, so any failure is ignored. Urgent popups ignore the timeout
+    on GNOME and stay until closed, which is why we keep the id.
+    """
+    base = ["notify-send", "--app-name=awaylock", "--urgency=critical",
+            f"--expire-time={int(seconds * 1000)}"]
     try:
-        subprocess.run(["notify-send", "--app-name=awaylock", "--urgency=critical",
-                        f"--expire-time={int(seconds * 1000)}", "awaylock", text],
-                       check=False, timeout=5)
+        # --print-id needs libnotify 0.8; older versions reject it, so retry without
+        for extra in (["--print-id"], []):
+            out = subprocess.run(base + extra + ["awaylock", text], capture_output=True,
+                                 text=True, check=False, timeout=5)
+            if out.returncode == 0:
+                return int(out.stdout.strip()) if out.stdout.strip().isdigit() else None
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def close_notification(nid):
+    if nid is None:
+        return
+    try:
+        subprocess.run(["gdbus", "call", "--session", "--dest=org.freedesktop.Notifications",
+                        "--object-path=/org/freedesktop/Notifications",
+                        "--method=org.freedesktop.Notifications.CloseNotification", str(nid)],
+                       capture_output=True, check=False, timeout=5)
     except (OSError, subprocess.SubprocessError):
         pass
 
@@ -486,6 +508,7 @@ class Watcher(threading.Thread):
         self.misses = 0
         self.dark = False
         self.was_locked = False
+        self.cam_released = False  # set when confirm_leaving closed the camera under run()
         if not start_paused:
             self.active.set()
 
@@ -524,11 +547,22 @@ class Watcher(threading.Thread):
         if grace <= 0:
             return True
         log.info("Nobody there, locking in %gs unless you show up.", grace)
-        notify(f"Locking in {grace:g}s. Move in front of the camera to cancel.", grace)
+        popup = notify(f"Locking in {grace:g}s. Move in front of the camera to cancel.", grace)
+        # Let go of the camera while we wait. Left open and unread, its buffer fills with
+        # old frames (a hand over the lens looks lit in IR), and the recheck would judge those.
+        cam.release()
+        self.cam_released = True
         self.quit.wait(grace)
+        close_notification(popup)  # whatever happens next, the warning is out of date
         if self.quit.is_set() or not self.active.is_set() or screen_locked():
             return False  # quit, paused or already locked while we were waiting
-        seen = self.face_present(cam)
+        fresh = self.open_camera()
+        if fresh is None:
+            return False
+        try:
+            seen = self.face_present(fresh)
+        finally:
+            fresh.release()
         if seen is False:
             return True
         if seen is True:
@@ -596,6 +630,10 @@ class Watcher(threading.Thread):
                     continue
 
             self.scan_once(cam)
+            if self.cam_released:
+                cam = None
+                self.cam_released = False
+                continue  # next pass reopens the camera, no need to wait again
             wait = self.interval()
             if wait >= KEEP_OPEN_BELOW:
                 cam.release()

@@ -71,6 +71,7 @@ def isolated_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(awaylock, "MODELS_DIR", tmp_path / "models")
     monkeypatch.setattr(awaylock, "screen_locked", lambda: False)  # never ask the real desktop
     monkeypatch.setattr(awaylock, "notify", lambda *a, **k: None)  # no real popups
+    monkeypatch.setattr(awaylock, "close_notification", lambda nid: None)
 
 
 # ---------- arguments and config ----------
@@ -488,8 +489,9 @@ def test_strobe_does_not_cause_false_locks(cfg, locks):
 # ---------- pausing while locked ----------
 
 class Result:
-    def __init__(self, stdout):
+    def __init__(self, stdout, returncode=0):
         self.stdout = stdout
+        self.returncode = returncode
 
 
 @pytest.mark.parametrize("desktop, output, expected", [
@@ -607,7 +609,9 @@ class ScriptedDetector:
 
 def grace_watcher(cfg, *answers, grace=0.01):
     cfg = dict(cfg, misses=1, grace=grace)
-    return awaylock.Watcher(cfg, ScriptedDetector(*answers))
+    w = awaylock.Watcher(cfg, ScriptedDetector(*answers))
+    w.open_camera = lambda: FakeCam(BRIGHT)  # the recheck opens its own camera
+    return w
 
 
 def test_no_grace_locks_straight_away(cfg, locks, monkeypatch):
@@ -714,3 +718,42 @@ def test_new_flags_parse_and_validate():
 def test_negative_grace_or_battery_interval_exit(flags):
     with pytest.raises(SystemExit):
         awaylock.resolve_config(awaylock.parse_args(flags))
+
+
+def test_grace_recheck_uses_a_freshly_opened_camera(cfg, locks):
+    released = []
+
+    class Tracked(FakeCam):
+        def release(self):
+            released.append(self)
+
+    old, fresh = Tracked(BRIGHT), Tracked(BRIGHT)
+    w = grace_watcher(cfg, False)
+    w.open_camera = lambda: fresh
+    assert w.scan_once(old) is True
+    assert old in released and fresh in released  # old closed for the wait, fresh closed after
+    assert w.cam_released is True
+
+
+def test_warning_popup_is_closed_after_the_wait(cfg, locks, monkeypatch):
+    closed = []
+    monkeypatch.setattr(awaylock, "notify", lambda *a, **k: 42)
+    monkeypatch.setattr(awaylock, "close_notification", closed.append)
+    w = grace_watcher(cfg, False, True)  # you come back
+    w.scan_once(FakeCam(BRIGHT))
+    assert closed == [42]
+
+
+def test_notify_returns_id_and_falls_back_for_old_libnotify(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        if "--print-id" in cmd:
+            return Result(stdout="", returncode=1)  # old notify-send rejects the flag
+        return Result(stdout="", returncode=0)
+
+    monkeypatch.undo()  # the autouse fakes would hide the real notify
+    monkeypatch.setattr(awaylock.subprocess, "run", fake_run)
+    assert awaylock.notify("hi", 3) is None
+    assert len(calls) == 2 and "--print-id" not in calls[1]
