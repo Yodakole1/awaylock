@@ -124,9 +124,12 @@ One-shot commands that print something and exit:
 | `--show-config` | Prints the settings in effect |
 | `--install-autostart` / `--uninstall-autostart` | Start at login, or stop doing that |
 | `--enroll` | Records your face for owner mode |
+| `--add-face` | Adds more samples to your face data, for glasses, headphones or a hat |
 | `--forget-me` | Deletes your face data |
 
-Click the tray icon to pause or resume. Pausing releases the camera completely.
+Click the tray icon to pause or resume. Pausing releases the camera completely. The first line of the
+tray menu (and the hover text, where your desktop shows one) tells you what the latest scan saw, and in
+owner mode how well your face matched, like `Match 0.82 (need 0.45)`.
 
 ## How it decides to lock
 
@@ -166,6 +169,7 @@ By default any face keeps the screen unlocked. If you'd rather it only trusts yo
 ./awaylock --enroll                    # look at the camera, turn your head a little
 ./awaylock --presence owner --save     # from now on only your face counts
 ./awaylock --match-threshold 0.55      # stricter matching (default 0.45)
+./awaylock --add-face                  # teach it you with glasses, headphones, a hat...
 ./awaylock --forget-me                 # delete your face data
 ```
 
@@ -174,6 +178,9 @@ Run with `-v` to see your match score on every scan, which is the easiest way to
 
 - Enrolling downloads two small face models once (YuNet and SFace from the
   [OpenCV model zoo](https://github.com/opencv/opencv_zoo)) and checks them against pinned hashes.
+- `--enroll` replaces what was stored. `--add-face` keeps it and adds more samples, so run it once
+  per look: put the glasses on, run it, take them off again. Scores for the new look then stop
+  dropping below the threshold.
 - Enroll with the camera you scan with. IR and color cameras see faces differently.
 - Scores drop when you turn your head or sit at a different distance than when you enrolled.
   Enroll while moving a little, and keep `--misses` at 2 or more.
@@ -231,6 +238,11 @@ Reports from other hardware and desktops are very welcome, see below.
 
 The tests never touch a camera or lock your screen. The camera, the lock call and the
 neural nets are replaced with fakes.
+
+The code is split in two files on purpose: `awaylock.py` does the watching, locking and
+command line, and `awaylock_tray.py` holds everything you can see (the tray icon and its menu). A future
+graphical window can go next to the tray file without touching the watcher. The watcher offers
+`status_text()` and an `on_update` hook for any interface to use.
 
 Contributions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). The most useful thing is trying it on
 other laptops and desktops and reporting what happened (the issue template tells you what to include).

@@ -757,3 +757,93 @@ def test_notify_returns_id_and_falls_back_for_old_libnotify(monkeypatch):
     monkeypatch.setattr(awaylock.subprocess, "run", fake_run)
     assert awaylock.notify("hi", 3) is None
     assert len(calls) == 2 and "--print-id" not in calls[1]
+
+
+# ---------- add-face ----------
+
+def test_merge_owner_appends_and_handles_empty():
+    old = np.ones((3, 4), dtype=np.float32)
+    new = np.zeros((2, 4), dtype=np.float32)
+    assert awaylock.merge_owner(old, new).shape == (5, 4)
+    assert awaylock.merge_owner(None, new).shape == (2, 4)
+
+
+def run_enroll_flag(monkeypatch, flag, new_samples):
+    class Cam:
+        def isOpened(self): return True
+        def release(self): pass
+
+    monkeypatch.setattr(awaylock.cv2, "VideoCapture", lambda *a, **k: Cam())
+    monkeypatch.setattr(awaylock, "OwnerDetector", lambda cfg, owner=None: object())
+    monkeypatch.setattr(awaylock, "enroll", lambda cam, det: new_samples)
+    awaylock.main([flag])
+
+
+def test_add_face_keeps_old_samples(monkeypatch):
+    awaylock.save_owner(np.ones((4, 8), dtype=np.float32))
+    run_enroll_flag(monkeypatch, "--add-face", np.zeros((3, 8), dtype=np.float32))
+    assert awaylock.load_owner().shape == (7, 8)
+
+
+def test_enroll_still_replaces_old_samples(monkeypatch):
+    awaylock.save_owner(np.ones((4, 8), dtype=np.float32))
+    run_enroll_flag(monkeypatch, "--enroll", np.zeros((3, 8), dtype=np.float32))
+    assert awaylock.load_owner().shape == (3, 8)
+
+
+def test_add_face_without_data_starts_fresh(monkeypatch, capsys):
+    run_enroll_flag(monkeypatch, "--add-face", np.zeros((3, 8), dtype=np.float32))
+    assert awaylock.load_owner().shape == (3, 8)
+    assert "starts a fresh one" in capsys.readouterr().out
+
+
+# ---------- tray status line ----------
+
+def status_watcher(cfg, detector=None, **over):
+    return awaylock.Watcher(dict(cfg, **over), detector or FakeDetector(FACE))
+
+
+def test_status_before_first_scan_and_when_paused(cfg):
+    w = status_watcher(cfg)
+    assert w.status_text() == "Waiting for a scan"
+    w.toggle()
+    assert w.status_text() == "Paused"
+
+
+def test_status_any_mode_follows_scans(cfg):
+    w = status_watcher(cfg)
+    w.scan_once(FakeCam(BRIGHT))
+    assert w.status_text() == "Face seen"
+    w.detector = FakeDetector([])
+    w.scan_once(FakeCam(BRIGHT))
+    assert w.status_text() == "No face seen"
+
+
+def test_status_owner_mode_shows_score_and_threshold(cfg):
+    det = FakeDetector(FACE)
+    det.last_score = 0.823
+    w = status_watcher(cfg, det, presence="owner", match_threshold=0.45)
+    w.scan_once(FakeCam(BRIGHT))
+    assert w.status_text() == "Match 0.82 (need 0.45)"
+
+
+def test_status_owner_mode_without_a_face(cfg):
+    det = FakeDetector([])
+    det.last_score = None
+    w = status_watcher(cfg, det, presence="owner")
+    w.scan_once(FakeCam(BRIGHT))
+    assert w.status_text() == "No face seen"
+
+
+def test_on_update_called_after_each_scan_and_errors_dont_matter(cfg):
+    w = status_watcher(cfg)
+    calls = []
+    w.on_update = lambda: calls.append(1)
+    w.scan_once(FakeCam(BRIGHT))
+    w.scan_once(FakeCam(BRIGHT))
+    assert len(calls) == 2
+
+
+def test_tray_module_imports_without_awaylock():
+    import awaylock_tray
+    assert callable(awaylock_tray.run_tray)

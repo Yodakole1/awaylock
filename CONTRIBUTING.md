@@ -1,6 +1,6 @@
 # Contributing to awaylock
 
-Thanks for helping. This is a small, single-file tool, so contributing is easy.
+Thanks for helping. This is a small tool of two files, so contributing is easy.
 
 ## The most useful thing you can do
 
@@ -89,7 +89,7 @@ That's allowed, with conditions. You own the change, not the tool.
 
 ## Making a change
 
-- Keep it simple. `awaylock.py` is one file on purpose, so people can read all of it.
+- Keep it simple. `awaylock.py` (the logic) and `awaylock_tray.py` (everything visible) are meant to be readable in one sitting. Keep camera logic out of the tray file and drawing out of the logic file.
 - Write comments the way you'd explain it to a friend: why, not a line-by-line narration.
 - Add a test for new behavior. The tests never use a real camera or lock a real screen; the camera,
   the lock call and the neural nets are replaced with fakes (see `tests/test_awaylock.py`).
