@@ -80,7 +80,7 @@ DEFAULTS = {
     "min_face": 30,           # smallest face (pixels) we care about
     "black_frame": "absent",  # what a black frame means: "absent" or "skip"
     "detector": "haar",       # "haar" (simple) or "yunet" (more accurate, needs a model download)
-    "presence": "any",        # "any" face keeps you unlocked, "owner" only your enrolled face does
+    "presence": "owner",      # "owner" only your enrolled face keeps you unlocked, "any" face does too
     "match_threshold": 0.45,  # how similar a face must be to count as you (OpenCV suggests 0.363, we want more margin)
     "detect_threshold": 0.8,  # how sure yunet must be that something is a face
 }
@@ -677,6 +677,41 @@ class Watcher(threading.Thread):
             cam.release()
 
 
+def enroll_from_camera(cfg, add=False):
+    """Open the camera, collect face samples and store them. With add=True they join the stored ones."""
+    existing = load_owner() if add else None
+    if add and existing is None:
+        print("No face data yet, so this starts a fresh one.")
+    elif add:
+        print(f"Adding to your {len(existing)} stored samples. "
+              "Put on the glasses, headphones or hat you want it to learn.")
+    cam = cv2.VideoCapture(cfg["camera"])
+    if not cam.isOpened():
+        sys.exit(f"Can't open camera {cfg['camera']}. Try --list-cameras.")
+    try:
+        new = enroll(cam, OwnerDetector(cfg, owner=None))  # no owner yet, we're making one
+    finally:
+        cam.release()
+    everything = merge_owner(existing, new)
+    save_owner(everything)
+    print(f"Face data saved ({len(everything)} samples).")
+
+
+def first_run_enroll(cfg):
+    """Owner mode is the default, so with no face stored yet we learn yours before starting."""
+    if not (sys.stdin and sys.stdin.isatty()):
+        # Started without a terminal (autostart), nobody is there to look at the camera.
+        notify("awaylock needs to learn your face first. Open a terminal and run: awaylock --enroll", 15)
+        sys.exit("No face data yet. Run: awaylock.py --enroll (or --presence any --save to skip owner mode).")
+    print("Welcome. awaylock only keeps your screen unlocked for your own face, so it has to learn it first.")
+    print("(It downloads two small face models once. Use --presence any --save to skip owner mode.)")
+    try:
+        input("Sit in front of the camera and press Enter... ")
+    except EOFError:
+        sys.exit("Cancelled.")
+    enroll_from_camera(cfg)
+
+
 def main(argv=None):
     args = parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -696,22 +731,7 @@ def main(argv=None):
         forget_owner()
         return
     if args.enroll or args.add_face:
-        existing = load_owner() if args.add_face else None
-        if args.add_face and existing is None:
-            print("No face data yet, so this starts a fresh one.")
-        elif args.add_face:
-            print(f"Adding to your {len(existing)} stored samples. "
-                  "Put on the glasses, headphones or hat you want it to learn.")
-        cam = cv2.VideoCapture(cfg["camera"])
-        if not cam.isOpened():
-            sys.exit(f"Can't open camera {cfg['camera']}. Try --list-cameras.")
-        try:
-            new = enroll(cam, OwnerDetector(cfg, owner=None))  # no owner yet, we're making one
-        finally:
-            cam.release()
-        everything = merge_owner(existing, new)
-        save_owner(everything)
-        print(f"Face data saved ({len(everything)} samples). Use it with: awaylock.py --presence owner --save")
+        enroll_from_camera(cfg, add=args.add_face)
         return
     if args.install_autostart or args.uninstall_autostart:
         if args.install_autostart:
@@ -721,6 +741,8 @@ def main(argv=None):
         return
 
     lock_handle = acquire_single_instance()  # noqa: F841
+    if cfg["presence"] == "owner" and load_owner() is None:
+        first_run_enroll(cfg)
     watcher = Watcher(cfg, make_detector(cfg), start_paused=args.paused)
     watcher.start()
     log.info("Watching camera %s every %ss, locking after %s empty scans. Ctrl+C to stop.",

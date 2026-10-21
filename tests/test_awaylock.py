@@ -54,7 +54,8 @@ def locks(monkeypatch):
 
 @pytest.fixture
 def cfg():
-    return dict(awaylock.DEFAULTS, misses=3)
+    # most tests exercise scanning with fake detectors, so they use "any" rather than owner mode
+    return dict(awaylock.DEFAULTS, misses=3, presence="any")
 
 
 def make_watcher(cfg, faces):
@@ -847,3 +848,53 @@ def test_on_update_called_after_each_scan_and_errors_dont_matter(cfg):
 def test_tray_module_imports_without_awaylock():
     import awaylock_tray
     assert callable(awaylock_tray.run_tray)
+
+
+# ---------- owner mode is the default ----------
+
+def test_owner_is_the_default_presence():
+    assert awaylock.DEFAULTS["presence"] == "owner"
+
+
+def test_presence_any_still_available():
+    c = awaylock.resolve_config(awaylock.parse_args(["--presence", "any"]))
+    assert c["presence"] == "any"
+
+
+def test_first_run_without_terminal_explains_and_exits(cfg, monkeypatch):
+    shown = []
+    monkeypatch.setattr(awaylock, "notify", lambda *a, **k: shown.append(a))
+    monkeypatch.setattr(awaylock.sys, "stdin", None)
+    with pytest.raises(SystemExit, match="--enroll"):
+        awaylock.first_run_enroll(dict(cfg, presence="owner"))
+    assert shown  # the autostart case has no terminal, so the user gets a popup
+
+
+def test_first_run_with_terminal_enrolls_then_continues(cfg, monkeypatch):
+    class Tty:
+        def isatty(self): return True
+
+    enrolled = []
+    monkeypatch.setattr(awaylock.sys, "stdin", Tty())
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+    monkeypatch.setattr(awaylock, "enroll_from_camera", lambda c, add=False: enrolled.append(c))
+    awaylock.first_run_enroll(dict(cfg, presence="owner"))
+    assert len(enrolled) == 1
+
+
+def test_start_in_owner_mode_without_face_data_goes_through_first_run(monkeypatch):
+    called = []
+    monkeypatch.setattr(awaylock, "first_run_enroll", lambda c: called.append(1) or (_ for _ in ()).throw(SystemExit))
+    with pytest.raises(SystemExit):
+        awaylock.main([])
+    assert called == [1]
+
+
+def test_start_in_any_mode_skips_first_run(monkeypatch):
+    class Stop(Exception):
+        pass
+
+    monkeypatch.setattr(awaylock, "first_run_enroll", lambda c: pytest.fail("should not enroll"))
+    monkeypatch.setattr(awaylock, "make_detector", lambda c: (_ for _ in ()).throw(Stop()))
+    with pytest.raises(Stop):
+        awaylock.main(["--presence", "any"])
