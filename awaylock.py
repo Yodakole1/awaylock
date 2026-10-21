@@ -5,7 +5,8 @@ awaylock - walk-away lock for Linux laptops with an IR camera.
 made and tested on asus vivobook
 
 Watches the camera every few seconds. If nobody is in front of the laptop
-for a while, it locks the screen. Sits in the tray so you can pause it.
+for a while, it locks the screen. Sits in the tray so you can pause it
+(the tray code lives in awaylock_tray.py).
 
 Examples:
     awaylock.py                      run with saved/default settings
@@ -124,6 +125,8 @@ def parse_args(argv=None):
     p.add_argument("--detect-threshold", type=float, dest="detect_threshold",
                    help=f"how sure yunet must be it's a face, 0-1 (default {DEFAULTS['detect_threshold']})")
     p.add_argument("--enroll", action="store_true", help="record your face so --presence owner can recognise you")
+    p.add_argument("--add-face", action="store_true", dest="add_face",
+                   help="add more samples of your face (glasses, headphones, a hat) to what --enroll stored")
     p.add_argument("--forget-me", action="store_true", help="delete your stored face data")
     p.add_argument("--list-cameras", action="store_true", help="try every camera, show which look like IR, and exit")
     p.add_argument("--install-autostart", action="store_true", help="start awaylock when you log in")
@@ -380,6 +383,13 @@ def save_owner(features):
     os.chmod(OWNER_PATH, 0o600)  # only you should read your face data
 
 
+def merge_owner(existing, new):
+    """Stored samples plus new ones. With nothing stored yet it's just the new ones."""
+    if existing is None:
+        return np.asarray(new, dtype=np.float32)
+    return np.vstack([existing, np.asarray(new, dtype=np.float32)])
+
+
 def forget_owner():
     try:
         OWNER_PATH.unlink()
@@ -509,6 +519,9 @@ class Watcher(threading.Thread):
         self.dark = False
         self.was_locked = False
         self.cam_released = False  # set when confirm_leaving closed the camera under run()
+        self.last_seen = None      # result of the latest scan: True, False, or None for no picture
+        self.last_score = None     # owner mode: how well the face matched, if there was one
+        self.on_update = None      # the tray hooks in here to redraw after each scan
         if not start_paused:
             self.active.set()
 
@@ -533,6 +546,19 @@ class Watcher(threading.Thread):
             log.info("Black frame, skipping this scan.")
             return None
         return self.detector.present(frame)
+
+    def status_text(self):
+        """One short line about the latest scan, for the tray."""
+        if not self.active.is_set():
+            return "Paused"
+        if self.last_seen is None:
+            return "Waiting for a scan" if self.misses == 0 else "No picture from the camera"
+        if self.cfg["presence"] == "owner":
+            need = self.cfg["match_threshold"]
+            if self.last_score is not None:
+                return f"Match {self.last_score:.2f} (need {need:.2f})"
+            return "No face seen"
+        return "Face seen" if self.last_seen else "No face seen"
 
     def interval(self):
         """Seconds to wait between scans, longer on battery if the user asked for that."""
@@ -573,6 +599,13 @@ class Watcher(threading.Thread):
     def scan_once(self, cam):
         """One scan: update the miss counter and lock when it's full. Returns True if we locked."""
         seen = self.face_present(cam)
+        self.last_seen = seen
+        self.last_score = getattr(self.detector, "last_score", None)
+        if self.on_update:
+            try:
+                self.on_update()
+            except Exception:  # a broken tray must never stop the scanning
+                log.debug("Tray update failed", exc_info=True)
         if seen is True:
             log.debug("Someone is there.")
             self.misses = 0
@@ -644,60 +677,6 @@ class Watcher(threading.Thread):
             cam.release()
 
 
-# ---------- tray ----------
-
-def expose_system_typelibs():
-    """Let a conda/venv python find the system's AppIndicator library.
-
-    GNOME only shows tray icons made through AppIndicator, which pystray reaches
-    via PyGObject. Environments like conda don't look in the system's typelib
-    folders, so we point them there. Has to happen before anything imports gi.
-    """
-    found = [d for d in ("/usr/lib/x86_64-linux-gnu/girepository-1.0",
-                         "/usr/lib/aarch64-linux-gnu/girepository-1.0",
-                         "/usr/lib64/girepository-1.0",
-                         "/usr/lib/girepository-1.0") if os.path.isdir(d)]
-    current = [d for d in os.environ.get("GI_TYPELIB_PATH", "").split(":") if d]
-    os.environ["GI_TYPELIB_PATH"] = ":".join(current + [d for d in found if d not in current])
-
-
-def run_tray(watcher):
-    # Tray support is optional so the core still works on a bare install.
-    expose_system_typelibs()
-    try:
-        import pystray
-        from PIL import Image, ImageDraw
-    except ImportError:
-        log.warning("pystray/Pillow not installed, running without a tray icon.")
-        return False
-
-    def icon_image(on):
-        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        d.ellipse((4, 4, 60, 60), fill=(46, 160, 67, 255) if on else (130, 130, 130, 255))
-        d.ellipse((22, 22, 42, 42), fill=(255, 255, 255, 255))
-        return img
-
-    def on_toggle(icon, item):
-        watcher.toggle()
-        icon.icon = icon_image(watcher.active.is_set())
-        log.info("Resumed." if watcher.active.is_set() else "Paused, camera released.")
-
-    def on_quit(icon, item):
-        log.info("Quit from the tray.")
-        watcher.stop()
-        icon.stop()
-
-    menu = pystray.Menu(
-        pystray.MenuItem(lambda item: "Pause" if watcher.active.is_set() else "Resume",
-                         on_toggle, default=True),  # default = left click
-        pystray.MenuItem("Quit", on_quit),
-    )
-    icon = pystray.Icon("awaylock", icon_image(watcher.active.is_set()), "awaylock", menu)
-    icon.run()
-    return True
-
-
 def main(argv=None):
     args = parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -716,15 +695,23 @@ def main(argv=None):
     if args.forget_me:
         forget_owner()
         return
-    if args.enroll:
+    if args.enroll or args.add_face:
+        existing = load_owner() if args.add_face else None
+        if args.add_face and existing is None:
+            print("No face data yet, so this starts a fresh one.")
+        elif args.add_face:
+            print(f"Adding to your {len(existing)} stored samples. "
+                  "Put on the glasses, headphones or hat you want it to learn.")
         cam = cv2.VideoCapture(cfg["camera"])
         if not cam.isOpened():
             sys.exit(f"Can't open camera {cfg['camera']}. Try --list-cameras.")
         try:
-            save_owner(enroll(cam, OwnerDetector(cfg, owner=None)))  # no owner yet, we're making one
+            new = enroll(cam, OwnerDetector(cfg, owner=None))  # no owner yet, we're making one
         finally:
             cam.release()
-        print("Face data saved. Use it with: awaylock.py --presence owner --save")
+        everything = merge_owner(existing, new)
+        save_owner(everything)
+        print(f"Face data saved ({len(everything)} samples). Use it with: awaylock.py --presence owner --save")
         return
     if args.install_autostart or args.uninstall_autostart:
         if args.install_autostart:
@@ -740,8 +727,12 @@ def main(argv=None):
              cfg["camera"], cfg["interval"], cfg["misses"])
 
     try:
-        if args.no_tray or not run_tray(watcher):
+        if args.no_tray:
             watcher.join()
+        else:
+            from awaylock_tray import run_tray  # kept out of this file on purpose
+            if not run_tray(watcher):
+                watcher.join()
     except KeyboardInterrupt:
         pass
     finally:
