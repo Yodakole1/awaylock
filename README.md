@@ -4,8 +4,8 @@ Walk-away lock for Linux laptops with an IR camera. Think Windows' "lock when I 
 for GNOME, KDE and friends.
 
 awaylock looks through the camera every few seconds. When nobody has been in front of the
-laptop for a while, it locks the screen. A tray icon lets you pause it, and an optional
-owner mode only trusts *your* face, so someone else sitting down doesn't keep your session open.
+laptop for a while, it locks the screen. It only trusts *your* face (owner mode, the default), so someone
+else sitting down doesn't keep your session open. A tray icon lets you pause it.
 
 Made and tested on an ASUS VivoBook (Sonix IR camera, Ubuntu, GNOME on Wayland).
 
@@ -43,9 +43,14 @@ Then, from the `awaylock` folder:
 ```bash
 ./awaylock --list-cameras                   # shows your cameras, find the one marked "looks like IR"
 ./awaylock --camera 2 --interval 5 --save   # use it (change 2 to your number), scan every 5s, remember that
-./awaylock                                  # run it, a tray icon appears
+./awaylock                                  # first run: it learns your face, then a tray icon appears
 ./awaylock --install-autostart              # start it automatically at every login
 ```
+
+The very first run asks you to sit in front of the camera and press Enter, then records a few samples
+of your face. That needs internet once, to download the two small face models (about 40 MB, mostly
+the recognition model). If you'd rather skip owner mode and let any face keep the screen unlocked,
+run `./awaylock --presence any --save`.
 
 Press `Ctrl+C` to stop it. To test it, cover the camera with your hand and wait. The screen
 should lock after a few scans.
@@ -106,8 +111,8 @@ Every setting is a command line option. Add `--save` to keep what you passed as 
 | `--battery-interval SECONDS` | Scan this far apart while on battery, to save power. 0 means same as `--interval` | 0 |
 | `--misses N` | Empty scans in a row before locking | 3 |
 | `--camera N` | Camera index, the N in `/dev/videoN` | 2 |
-| `--detector haar\|yunet` | Face detector. YuNet is more accurate and downloads a small model once | haar |
-| `--presence any\|owner` | Any face keeps you unlocked, or only your enrolled face | any |
+| `--detector haar\|yunet` | Face detector for `--presence any`. YuNet is more accurate and downloads a small model once. Owner mode always uses YuNet | haar |
+| `--presence owner\|any` | Only your enrolled face keeps you unlocked, or any face does | owner |
 | `--match-threshold X` | How similar a face must be to count as you, 0-1 | 0.45 |
 | `--detect-threshold X` | How sure YuNet must be that something is a face | 0.8 |
 | `--min-face PIXELS` | Smallest face to care about | 30 |
@@ -123,7 +128,7 @@ One-shot commands that print something and exit:
 | `--list-cameras` | Opens each camera briefly and shows which look like IR |
 | `--show-config` | Prints the settings in effect |
 | `--install-autostart` / `--uninstall-autostart` | Start at login, or stop doing that |
-| `--enroll` | Records your face for owner mode |
+| `--enroll` | Records your face for owner mode, replacing what was stored |
 | `--add-face` | Adds more samples to your face data, for glasses, headphones or a hat |
 | `--forget-me` | Deletes your face data |
 
@@ -161,26 +166,32 @@ Things it deliberately does not do:
 - While the screen is locked it stops scanning and releases the camera, then picks up again when you unlock.
 - It refuses to start twice.
 
-## Owner mode: only lock for your face
+## Owner mode: only your face counts
 
-By default any face keeps the screen unlocked. If you'd rather it only trusts you:
+This is the default. Someone else sitting at your laptop while you're away counts as nobody there, so
+it locks. The first run walks you through learning your face; after that:
 
 ```bash
-./awaylock --enroll                    # look at the camera, turn your head a little
-./awaylock --presence owner --save     # from now on only your face counts
+./awaylock --enroll                    # start over: replaces the stored face data
+./awaylock --add-face                  # add more samples, keeps the old ones
+./awaylock --presence any --save       # switch owner mode off, any face keeps you unlocked
 ./awaylock --match-threshold 0.55      # stricter matching (default 0.45)
 ./awaylock --add-face                  # teach it you with glasses, headphones, a hat...
 ./awaylock --forget-me                 # delete your face data
 ```
 
-Someone else sitting at your laptop while you're away then counts as nobody there, and it locks.
-Run with `-v` to see your match score on every scan, which is the easiest way to pick a threshold.
+awaylock only ever *locks*. Getting back in still takes your password. Run with `-v` to see your match score on every scan, which is the easiest way to pick a threshold.
 
 - Enrolling downloads two small face models once (YuNet and SFace from the
   [OpenCV model zoo](https://github.com/opencv/opencv_zoo)) and checks them against pinned hashes.
 - `--enroll` replaces what was stored. `--add-face` keeps it and adds more samples, so run it once
   per look: put the glasses on, run it, take them off again. Scores for the new look then stop
-  dropping below the threshold.
+  dropping below the threshold. Samples are one shared pool, so a second person (a partner, your dad)
+  can be added the same way and any of you keeps the screen unlocked.
+- Started from autostart with no face data, awaylock can't ask you anything, so it shows a popup telling you
+  to run `./awaylock --enroll` and exits.
+- Upgrading from the first version? Your saved settings still say `presence: any`. Switch with
+  `./awaylock --presence owner --save` (and `--enroll` if you haven't yet).
 - Enroll with the camera you scan with. IR and color cameras see faces differently.
 - Scores drop when you turn your head or sit at a different distance than when you enrolled.
   Enroll while moving a little, and keep `--misses` at 2 or more.
