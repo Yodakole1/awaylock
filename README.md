@@ -1,5 +1,7 @@
 # awaylock
 
+[![tests](https://github.com/Yodakole1/awaylock/actions/workflows/tests.yml/badge.svg)](https://github.com/Yodakole1/awaylock/actions/workflows/tests.yml)
+
 Walk-away lock for Linux laptops with an IR camera. Think Windows' "lock when I walk away",
 for GNOME, KDE and friends.
 

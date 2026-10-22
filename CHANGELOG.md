@@ -20,5 +20,6 @@ First public version.
 - Bad values are caught: `nan`, `inf` and a negative camera are refused with a message, and a single
   nonsense setting in `config.json` falls back to its default with a warning instead of crashing.
 - A busy or missing camera is reported once, with a note when it comes back, instead of on every scan, and OpenCV's own warnings are hidden unless you use `-v`.
+- GitHub Action runs the tests on every pull request (Python 3.10, 3.12 and 3.14).
 - Single-instance lock, camera retry, pinned-hash model downloads.
 - Tested on an ASUS VivoBook with Ubuntu and GNOME on Wayland.
