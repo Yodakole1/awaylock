@@ -24,6 +24,7 @@ import fcntl
 import hashlib
 import json
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -88,14 +89,52 @@ DEFAULTS = {
 
 # ---------- settings ----------
 
+WHOLE_NUMBERS = ("camera", "misses", "min_face")
+CHOICES = {"black_frame": ("absent", "skip"), "detector": ("haar", "yunet"), "presence": ("any", "owner")}
+
+
+def problem_with(key, value):
+    """Why a setting's value can't be used, or None when it's fine."""
+    name = key.replace("_", "-")
+    if key in CHOICES:
+        if value not in CHOICES[key]:
+            return f"{name} must be {' or '.join(repr(c) for c in CHOICES[key])}"
+        return None
+    # everything else is a number; bool is an int in Python but never what anyone meant
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return f"{name} must be a normal number"
+    if key in WHOLE_NUMBERS and value != int(value):
+        return f"{name} must be a whole number"
+    if key == "interval" and value <= 0:
+        return "interval must be above 0"
+    if key in ("battery_interval", "grace") and value < 0:
+        return f"{name} can't be negative"
+    if key == "misses" and value < 1:
+        return "misses must be at least 1"
+    if key == "camera" and value < 0:
+        return "camera must be 0 or higher"
+    if key == "min_face" and value < 1:
+        return "min-face must be at least 1"
+    if key in ("match_threshold", "detect_threshold") and not 0 < value <= 1:
+        return f"{name} must be above 0 and at most 1"
+    return None
+
+
 def load_config():
-    # Saved settings sit on top of the defaults; a broken file just gets ignored.
+    # Saved settings sit on top of the defaults. A broken file is ignored, and so is any single
+    # setting that makes no sense (hand-edited, say): that one falls back to its default.
     cfg = dict(DEFAULTS)
     try:
         saved = json.loads(CONFIG_PATH.read_text())
-        cfg.update({k: v for k, v in saved.items() if k in DEFAULTS})
+        items = [(k, v) for k, v in saved.items() if k in DEFAULTS]
     except (OSError, ValueError, AttributeError):
-        pass
+        return cfg
+    for key, value in items:
+        bad = problem_with(key, value)
+        if bad:
+            log.warning("%s: %s, using %s instead.", CONFIG_PATH.name, bad, DEFAULTS[key])
+            continue
+        cfg[key] = int(value) if key in WHOLE_NUMBERS else value
     return cfg
 
 
@@ -146,26 +185,10 @@ def resolve_config(args):
         value = getattr(args, key)
         if value is not None:
             cfg[key] = value
-    if cfg["interval"] <= 0:
-        sys.exit("interval must be above 0")
-    if cfg["battery_interval"] < 0:
-        sys.exit("battery-interval can't be negative")
-    if cfg["grace"] < 0:
-        sys.exit("grace can't be negative")
-    if cfg["misses"] < 1:
-        sys.exit("misses must be at least 1")
-    if cfg["min_face"] < 1:
-        sys.exit("min-face must be at least 1")
-    if cfg["black_frame"] not in ("absent", "skip"):
-        sys.exit("black-frame must be 'absent' or 'skip'")
-    if cfg["detector"] not in ("haar", "yunet"):
-        sys.exit("detector must be 'haar' or 'yunet'")
-    if cfg["presence"] not in ("any", "owner"):
-        sys.exit("presence must be 'any' or 'owner'")
-    if not 0 < cfg["match_threshold"] <= 1:
-        sys.exit("match-threshold must be above 0 and at most 1")
-    if not 0 < cfg["detect_threshold"] <= 1:
-        sys.exit("detect-threshold must be above 0 and at most 1")
+    for key in DEFAULTS:
+        bad = problem_with(key, cfg[key])
+        if bad:
+            sys.exit(bad)
     return cfg
 
 
@@ -519,6 +542,7 @@ class Watcher(threading.Thread):
         self.dark = False
         self.was_locked = False
         self.cam_released = False  # set when confirm_leaving closed the camera under run()
+        self.camera_busy = False   # true while the camera can't be opened, so we only complain once
         self.last_seen = None      # result of the latest scan: True, False, or None for no picture
         self.last_score = None     # owner mode: how well the face matched, if there was one
         self.on_update = None      # the tray hooks in here to redraw after each scan
@@ -658,9 +682,15 @@ class Watcher(threading.Thread):
             if cam is None:
                 cam = self.open_camera()
                 if cam is None:
-                    log.error("Can't open camera %s, will retry. Try --list-cameras.", self.cfg["camera"])
+                    if not self.camera_busy:  # say it once, not on every scan
+                        log.warning("Can't open camera %s (in use, or missing?), will keep trying quietly. "
+                                    "See --list-cameras.", self.cfg["camera"])
+                        self.camera_busy = True
                     self.quit.wait(self.interval())
                     continue
+                if self.camera_busy:
+                    log.info("Camera is available again.")
+                    self.camera_busy = False
 
             self.scan_once(cam)
             if self.cam_released:
@@ -712,10 +742,22 @@ def first_run_enroll(cfg):
     enroll_from_camera(cfg)
 
 
+def quiet_opencv():
+    # OpenCV prints its own "can't open camera by index" warning on every failed try, which
+    # drowns our one-line note. Errors still come through; -v turns the warnings back on.
+    try:
+        logging_api = cv2.utils.logging
+        logging_api.setLogLevel(logging_api.LOG_LEVEL_ERROR)
+    except (AttributeError, cv2.error):
+        pass  # an OpenCV without this API just stays chatty
+
+
 def main(argv=None):
     args = parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    if not args.verbose:
+        quiet_opencv()
     cfg = resolve_config(args)
 
     if args.save:
