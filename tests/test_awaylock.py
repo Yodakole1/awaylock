@@ -898,3 +898,66 @@ def test_start_in_any_mode_skips_first_run(monkeypatch):
     monkeypatch.setattr(awaylock, "make_detector", lambda c: (_ for _ in ()).throw(Stop()))
     with pytest.raises(Stop):
         awaylock.main(["--presence", "any"])
+
+
+# ---------- bad values ----------
+
+@pytest.mark.parametrize("flags", [
+    ["--interval", "nan"], ["--interval", "inf"], ["--grace", "inf"], ["--grace", "nan"],
+    ["--battery-interval", "inf"], ["--camera", "-1"], ["--misses", "-2"]])
+def test_nan_inf_and_negative_command_line_values_exit(flags):
+    with pytest.raises(SystemExit):
+        awaylock.resolve_config(awaylock.parse_args(flags))
+
+
+def test_exit_message_names_the_setting():
+    with pytest.raises(SystemExit, match="camera must be 0 or higher"):
+        awaylock.resolve_config(awaylock.parse_args(["--camera", "-1"]))
+
+
+@pytest.mark.parametrize("key,value", [
+    ("interval", "abc"), ("interval", None), ("interval", True), ("interval", float("nan")),
+    ("interval", -3), ("misses", 2.5), ("misses", "x"), ("camera", -1),
+    ("presence", "nobody"), ("detector", 5), ("match_threshold", 7), ("grace", -1)])
+def test_one_bad_saved_setting_falls_back_to_its_default(key, value, caplog):
+    awaylock.CONFIG_PATH.write_text(json.dumps({"min_face": 77, key: value}))  # the bad one wins on a clash
+    cfg = awaylock.load_config()
+    assert cfg[key] == awaylock.DEFAULTS[key]
+    assert key.replace("_", "-") in caplog.text  # and it says which one
+    if key != "min_face":
+        assert cfg["min_face"] == 77  # the rest of the file still counts
+
+
+def test_saved_whole_number_written_as_float_is_accepted():
+    awaylock.CONFIG_PATH.write_text(json.dumps({"misses": 5.0, "camera": 2.0}))
+    cfg = awaylock.load_config()
+    assert cfg["misses"] == 5 and isinstance(cfg["misses"], int)
+    assert cfg["camera"] == 2
+
+
+def test_hand_edited_config_with_text_does_not_crash_startup(capsys):
+    awaylock.CONFIG_PATH.write_text('{"interval": "abc"}')
+    cfg = awaylock.resolve_config(awaylock.parse_args([]))
+    assert cfg["interval"] == awaylock.DEFAULTS["interval"]
+
+
+# ---------- busy camera ----------
+
+def test_busy_camera_is_reported_once_then_recovery_once(cfg, monkeypatch, caplog):
+    import logging
+    caplog.set_level(logging.INFO, logger="awaylock")
+    w = awaylock.Watcher(dict(cfg, interval=0.01))
+    attempts = []
+
+    def open_cam():
+        attempts.append(1)
+        if len(attempts) <= 4:
+            return None  # busy for four tries
+        w.stop()
+        return FakeCam(BRIGHT)
+
+    monkeypatch.setattr(w, "open_camera", open_cam)
+    w.run()
+    text = caplog.text
+    assert text.count("Can't open camera") == 1  # not once per try
+    assert text.count("available again") == 1

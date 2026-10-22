@@ -17,5 +17,8 @@ First public version.
 - Tray menu and hover text show the latest scan and, in owner mode, the match score.
 - Tray code moved to `awaylock_tray.py`.
 - Owner mode is now the default. The first run learns your face (asks for a terminal and Enter), `--presence any` turns it off.
+- Bad values are caught: `nan`, `inf` and a negative camera are refused with a message, and a single
+  nonsense setting in `config.json` falls back to its default with a warning instead of crashing.
+- A busy or missing camera is reported once, with a note when it comes back, instead of on every scan.
 - Single-instance lock, camera retry, pinned-hash model downloads.
 - Tested on an ASUS VivoBook with Ubuntu and GNOME on Wayland.
