@@ -961,3 +961,13 @@ def test_busy_camera_is_reported_once_then_recovery_once(cfg, monkeypatch, caplo
     text = caplog.text
     assert text.count("Can't open camera") == 1  # not once per try
     assert text.count("available again") == 1
+
+
+def test_opencv_warnings_are_hidden_unless_verbose(monkeypatch):
+    levels = []
+    monkeypatch.setattr(awaylock.cv2.utils.logging, "setLogLevel", levels.append)
+    awaylock.main(["--show-config"])
+    assert levels == [awaylock.cv2.utils.logging.LOG_LEVEL_ERROR]
+    levels.clear()
+    awaylock.main(["--show-config", "-v"])
+    assert levels == []

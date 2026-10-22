@@ -742,10 +742,22 @@ def first_run_enroll(cfg):
     enroll_from_camera(cfg)
 
 
+def quiet_opencv():
+    # OpenCV prints its own "can't open camera by index" warning on every failed try, which
+    # drowns our one-line note. Errors still come through; -v turns the warnings back on.
+    try:
+        logging_api = cv2.utils.logging
+        logging_api.setLogLevel(logging_api.LOG_LEVEL_ERROR)
+    except (AttributeError, cv2.error):
+        pass  # an OpenCV without this API just stays chatty
+
+
 def main(argv=None):
     args = parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    if not args.verbose:
+        quiet_opencv()
     cfg = resolve_config(args)
 
     if args.save:
